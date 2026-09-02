@@ -1,0 +1,362 @@
+# Oracle to PostgreSQL SQL Migration Prompt
+
+Migrate the Oracle SQL provided below to PostgreSQL SQL.
+
+The Oracle SQL is the source of truth. Produce a PostgreSQL-compatible equivalent while preserving the original query's behavior and semantics.
+
+## Oracle SQL
+
+```sql
+{{PASTE_ORACLE_SQL_HERE}}
+```
+
+## Migration Requirements
+
+### 1. Preserve SQL Behavior
+
+Preserve:
+
+* SELECT expressions
+* Tables and aliases
+* JOIN types and JOIN conditions
+* WHERE conditions
+* AND/OR logic and parentheses
+* NULL behavior
+* GROUP BY
+* HAVING
+* ORDER BY
+* Aggregations
+* DISTINCT behavior
+* Subqueries
+* CTEs
+* EXISTS / NOT EXISTS
+* UNION / UNION ALL
+* MINUS / INTERSECT
+* Window/analytic functions
+* Bind parameters
+* Pagination behavior
+* Date/time semantics
+* Custom functions
+* Custom types
+* Collection behavior
+* Application-specific placeholders
+
+Do not simplify, remove, or change business logic.
+
+Do not invent missing business logic.
+
+Do not perform blind text replacements.
+
+---
+
+### 2. Oracle Built-in Functions
+
+Replace Oracle-specific functions with PostgreSQL-compatible equivalents when their behavior is known.
+
+Examples:
+
+```sql
+NVL(column_name, value)
+```
+
+→
+
+```sql
+COALESCE(column_name, value)
+```
+
+and:
+
+```sql
+DECODE(...)
+```
+
+→ appropriate PostgreSQL `CASE` logic.
+
+Verify NULL behavior, data types, implicit conversions, and evaluation semantics before replacing a function.
+
+---
+
+### 3. Oracle Custom Functions
+
+If the query contains custom Oracle functions such as:
+
+```sql
+FN_SOMETHING(...)
+```
+
+do not invent their implementation.
+
+If the function call can remain as a PostgreSQL function dependency, preserve it.
+
+If the function definition is required to determine the correct migration, mark it as unresolved and explain what definition is required.
+
+---
+
+### 4. Oracle Custom Types and Collections
+
+Pay special attention to:
+
+* Oracle object types
+* Nested table types
+* VARRAYs
+* Collection types
+* `TABLE(...)`
+* `MULTISET`
+* `IS EMPTY`
+* Collection casts
+
+Do not blindly convert Oracle collections to PostgreSQL arrays or `UNNEST`.
+
+Determine the semantics first.
+
+If the required Oracle type definition is unavailable and the correct PostgreSQL equivalent cannot be determined safely, mark the migration as unresolved.
+
+---
+
+### 5. TABLE(...)
+
+If the Oracle SQL contains:
+
+```sql
+TABLE(...)
+```
+
+determine what the expression represents before migrating it.
+
+Possible PostgreSQL implementations may involve `UNNEST`, `LATERAL`, a relational table, or a PostgreSQL set-returning function, but do not assume one fixed replacement.
+
+If the collection/type definition is required but unavailable, mark it as unresolved.
+
+---
+
+### 6. MULTISET
+
+If the Oracle SQL contains `MULTISET`, determine its actual semantics before migrating.
+
+Consider:
+
+* Set vs collection behavior
+* Duplicate handling
+* NULL behavior
+* Ordering
+* Nested collections
+* Collection comparison/construction
+
+Do not blindly replace `MULTISET`.
+
+If safe migration cannot be determined, mark it as unresolved.
+
+---
+
+### 7. ROWNUM and Pagination
+
+Do not blindly replace `ROWNUM` with `LIMIT`.
+
+Determine the query level where `ROWNUM` is applied.
+
+For example:
+
+```sql
+SELECT *
+FROM (
+    SELECT ...
+    FROM ...
+    ORDER BY ...
+)
+WHERE ROWNUM <= :limitRows
+```
+
+must preserve the original ordering and row-limiting semantics.
+
+Preserve bind parameters such as:
+
+```sql
+:limitRows
+```
+
+Do not replace bind parameters with invented values.
+
+---
+
+### 8. CONNECT BY / START WITH / LEVEL
+
+If the Oracle SQL contains:
+
+```sql
+CONNECT BY
+START WITH
+LEVEL
+SYS_CONNECT_BY_PATH
+```
+
+determine the hierarchy/recursive behavior.
+
+Use PostgreSQL-compatible recursive SQL, such as `WITH RECURSIVE`, when appropriate.
+
+Preserve:
+
+* Root conditions
+* Parent/child relationships
+* Recursion
+* Hierarchy depth
+* Path construction
+* Ordering
+* Cycle behavior where applicable
+
+Do not perform simple keyword replacement.
+
+---
+
+### 9. DUAL
+
+If:
+
+```sql
+FROM DUAL
+```
+
+is only Oracle's dummy table, remove it and produce PostgreSQL-compatible SQL.
+
+Do not leave `DUAL` in the final PostgreSQL SQL unless it is intentionally unresolved.
+
+---
+
+### 10. Application Placeholders
+
+The Oracle SQL may contain application-specific placeholders such as:
+
+```sql
+<<JOIN_SOMETHING>>
+```
+
+Treat these as application placeholders, not automatically as Oracle syntax.
+
+If the definition is unavailable:
+
+* Preserve the placeholder exactly.
+* Do not invent its SQL.
+* List it in the migration summary.
+* Mark the migration as unresolved if it prevents safe migration.
+
+---
+
+# 11. Mandatory Oracle-Syntax Final Scan
+
+After generating the PostgreSQL SQL, scan the **generated SQL itself** for the following Oracle-specific tokens:
+
+```text
+MULTISET
+TABLE(
+IS EMPTY
+DUAL
+ROWNUM
+CONNECT BY
+START WITH
+NVL(
+DECODE(
+SYS_CONNECT_BY_PATH
+LEVEL
+```
+
+This scan is mandatory.
+
+If any token remains:
+
+### Option 1 — Rewrite
+
+If the construct can be safely migrated, rewrite it using PostgreSQL-compatible syntax and scan again.
+
+### Option 2 — Mark Unresolved
+
+If it cannot be safely migrated because required information is unavailable:
+
+* Mark the migration as `UNRESOLVED`.
+* Identify the exact construct.
+* Explain why it cannot be migrated safely.
+* Identify the missing information.
+* Explicitly list it in the migration summary.
+
+Never silently leave Oracle-specific syntax in the final PostgreSQL SQL.
+
+---
+
+# 12. Final Validation Rule
+
+The final PostgreSQL query must contain **no Oracle-only keywords or constructs** from the mandatory list above.
+
+The only exception is an intentionally preserved unresolved dependency.
+
+If an Oracle-specific construct remains intentionally:
+
+* It must be explicitly listed in the migration summary.
+* The migration status must be `UNRESOLVED`.
+* The reason must be explained.
+* The required missing information must be identified.
+
+A migration must not be reported as successfully migrated when Oracle-specific syntax remains silently.
+
+---
+
+# 13. Semantic Validation
+
+Before returning the result, compare the PostgreSQL SQL against the original Oracle SQL.
+
+Verify:
+
+* Same SELECT logic
+* Same tables
+* Same joins
+* Same join predicates
+* Same filtering conditions
+* Same NULL behavior
+* Same grouping
+* Same aggregation
+* Same ordering
+* Same pagination
+* Same subquery/CTE behavior
+* Same EXISTS/NOT EXISTS behavior
+* Same bind parameters
+* Same custom function dependencies
+* Same custom type/collection behavior
+* Same application placeholders
+
+If you identify a semantic difference, correct the PostgreSQL SQL before returning it.
+
+Do not claim equivalence when required information is missing.
+
+---
+
+# 14. Final Response Format
+
+Return the result in exactly this structure:
+
+## PostgreSQL SQL
+
+```sql
+<FINAL_POSTGRESQL_SQL>
+```
+
+## Migration Summary
+
+* **Migration Status:** `MIGRATED` or `UNRESOLVED`
+* **Oracle constructs migrated:** <list>
+* **PostgreSQL replacements:** <list>
+* **Custom functions:** <list or None>
+* **Custom types/collections:** <list or None>
+* **Application placeholders preserved:** <list or None>
+* **Unresolved dependencies:** <list or None>
+* **Semantic limitations:** <list or None>
+* **Oracle-only syntax remaining:** <list or None>
+
+## Final Validation
+
+* Oracle-specific syntax scan: `PASS` / `FAIL`
+* Semantic review: `PASS` / `UNRESOLVED`
+* PostgreSQL compatibility: `PASS` / `UNRESOLVED`
+
+Do not return `MIGRATED` if unresolved Oracle-specific syntax remains.
+
+Do not invent missing definitions or business logic.
+
+The final SQL must be PostgreSQL-compatible and must preserve the behavior of the original Oracle SQL as far as the available information allows.
