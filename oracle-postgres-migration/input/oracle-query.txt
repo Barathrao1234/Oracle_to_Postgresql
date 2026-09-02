@@ -1,0 +1,53 @@
+-- Sample legacy Oracle query used to exercise this pipeline end-to-end.
+-- It intentionally combines the patterns this pipeline must handle:
+--   * a CTE
+--   * custom PL/SQL functions with no supplied definition (UNRESOLVED)
+--   * custom collection/object types with no supplied definition (UNRESOLVED)
+--   * an application-layer placeholder (<<...>>) that must be preserved verbatim
+--   * a non-equi JOIN predicate (NVL-guarded comparison)
+--   * nested ROWNUM pagination
+--   * EXISTS / TABLE(collection) / MULTISET-flavored constructs
+--
+-- Replace this file's contents with your real Oracle SQL before running the
+-- Agent. Keeping a realistic sample here means the pipeline (analysis,
+-- migration, and every validator) is actually being tested, not just the
+-- rules that describe how it *should* behave.
+
+WITH batch_totals AS (
+    SELECT
+        b.batch_id,
+        b.acct_id,
+        b.src_ccy_tx,
+        FN_IP_CNT(b.batch_id)      AS in_progress_cnt,
+        FN_PEND_CNT(b.batch_id)    AS pending_cnt
+    FROM alt_batch b
+    WHERE b.batch_status = 'OPEN'
+)
+SELECT *
+FROM (
+    SELECT
+        m.acct_id,
+        m.src_ccy_tx,
+        m.auth_hist         AS auth_hist_coll,
+        m.totals_coll        AS totals_coll,
+        FN_REJ_PART_IND(m.acct_id, m.src_ccy_tx)   AS rej_part_ind,
+        FN_POST_PART_IND(m.acct_id, m.src_ccy_tx)  AS post_part_ind,
+        FN_CHG_IND(m.acct_id)                      AS chg_ind,
+        t.in_progress_cnt,
+        t.pending_cnt
+    FROM merchant_txn m
+    JOIN batch_totals t
+        ON m.acct_id = t.acct_id
+       AND m.src_ccy_tx = NVL(t.src_ccy_tx, m.src_ccy_tx)
+    <<JOIN_ALT_BATCH_OUT>>
+    WHERE m.status_cd = 'A'
+      AND EXISTS (
+            SELECT 1
+            FROM TABLE(m.auth_hist) ah
+            WHERE ah.auth_state IN ('APPROVED', 'PENDING')
+          )
+      AND CAST(m.state_coll AS ALT_STATE_COLL_T) IS NOT NULL
+      AND m.rq_coll IS NOT EMPTY
+    ORDER BY m.acct_id, m.src_ccy_tx
+)
+WHERE ROWNUM <= :limitRows;
